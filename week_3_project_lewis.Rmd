@@ -1,0 +1,176 @@
+---
+title: "NYPD Historical Shooting Incidents"
+author: "Jen Lewis"
+date: "2024-04-12"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+library("tidyverse")
+library("lubridate")
+library("hms")
+library("interactions")
+
+data_location = "Data/NYPD_Shooting_Incident_Data__Historic_.csv"
+shooting_data = read_csv(data_location)
+
+summary(shooting_data)
+
+```
+
+# Introduction
+
+For the third week we were asked to download historical NYPD shooting data and do some sort of analysis that is interesting to us. Since I'm newer to the R language I wanted to focus on learning how to manipulate data by using the tidyverse package. So I decided to do a simple analysis on the amount of shootings in each borough per year based on various social groups of the victim. The results will look at the amount of shootings in each borough for the following groups:
+  
+  1. Sex
+  2. Age Group
+  3. Race
+
+At the end we'll make a comparison of the amounts in each borough and also display some plots with predictive data of how many deaths will occur within each group type in each borough.
+
+The first step is to clean the data. I wasn't entirely sure if I wanted to do something with the time that was provided so I chose to convert the occurrence date to a date object and the occurrence time to a time object and then once I was sure that I didn't lose any data I combined them into one time date object.
+
+```{r cleaning_data, include=TRUE}
+
+# select columns that have the information we want to use
+# convert the time and date columns into one date time column
+cleaned_data <- shooting_data %>% 
+  select(BORO, OCCUR_DATE, OCCUR_TIME, VIC_AGE_GROUP, VIC_SEX, VIC_RACE) %>%  
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+  mutate(OCCUR_TIME = parse_hms(OCCUR_TIME))
+
+# create the new column and update the cleaned_data
+# now arrange the data based on borough since we're basing our totals off of it
+cleaned_data <- cleaned_data %>% 
+  mutate(OCCUR_DATETIME = mdy_hms(
+    (paste(format(OCCUR_DATE, format="%b %d %y"), 
+           format(OCCUR_TIME, format="%h %m %s"))))) %>% 
+  select(BORO, OCCUR_DATETIME, VIC_AGE_GROUP, VIC_RACE, VIC_SEX)
+
+summary(cleaned_data)
+
+```
+
+# Handling data loss and conversion errors
+
+I wanted to include the code below, because this was my first attempt at trying to create the column. I incorrectly parsed the time column, which caused a loss of data. I figured out I was losing data once I attempted to combine the date and time and found that not all rows were able to convert. I filtered the results to see where the date time was set to NA to see what the times and dates looked like. That was when I found out that I had incorrectly parsed the time objects since not all of them were in the form of "hh mm ss", some had no hour set, which I'm assuming means midnight. 
+
+``` {r data_loss, include=TRUE}
+
+#cleaned_data <- shooting_data %>% 
+#  select(BORO, OCCUR_DATE, OCCUR_TIME, VIC_AGE_GROUP, VIC_SEX, VIC_RACE) %>%  
+#  mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+#  mutate(OCCUR_TIME = hms(OCCUR_TIME))
+
+#summary(cleaned_data)
+
+#loss_of_data <- cleaned_data %>% 
+# mutate(OCCUR_DATETIME = mdy_hms((paste(
+# format(OCCUR_DATE, format="%b %d %y"), 
+# format(OCCUR_TIME, format="%h %m %s")))))
+
+# the console didn't throw a warning until I ran the above line. The way I determined what 
+# was happening was with the below command to see what the dates and times looked like.
+#loss_of_data %>% filter(is.na(OCCUR_DATETIME))
+
+```
+
+# Visualizing and analyzing the data
+
+Once I got to this point I tried to think of how could I visualize the data in terms of borough and social groups. I knew that having the months, days, and times of the shooting occurrences would potentially be too much information for trying to plot something so I wrote a command to display the year range and after seeing that it ranged from 2006 to 2022 I decided to use the years as my x values for my plot. This meant that I needed to condense the data again into another variable that had just the year of the incident in it. I then created three more variables to split out the data into the three social groups I wanted to analyze. 
+
+To be able to plot something somewhat useful, I knew I would need to sum up the total shootings for each social group per year and per borough. I achieved this by grouping them by the borough, year, and the specific social group for the variable. Then I used summarize to add the totals for the groups I had just arranged the data by.
+
+```{r vizualizing_data, include=TRUE}
+
+# this is what I used to figure out the range of years in the data
+cleaned_data %>% arrange(desc(OCCUR_DATETIME)) %>% 
+  distinct(Year = year(OCCUR_DATETIME)) 
+
+# create the new tibble with the year of incident column
+shootings_by_year <- cleaned_data %>% 
+  mutate(YEAR_OF_INCIDENT = year(OCCUR_DATETIME)) %>% 
+  select(BORO, YEAR_OF_INCIDENT, VIC_AGE_GROUP, VIC_RACE, VIC_SEX)
+
+# visualizing data within the different social groups
+shootings_by_sex <- shootings_by_year %>% 
+  summarize(.by = c(BORO, YEAR_OF_INCIDENT, VIC_SEX), TOTAL = n()) %>% 
+  arrange(desc(BORO), desc(YEAR_OF_INCIDENT))
+shootings_by_age <- shootings_by_year %>% 
+  summarize(.by = c(BORO, YEAR_OF_INCIDENT, VIC_AGE_GROUP), TOTAL = n()) %>% 
+  arrange(desc(BORO), desc(YEAR_OF_INCIDENT))
+shootings_by_race <- shootings_by_year %>% 
+  summarize(.by = c(BORO, YEAR_OF_INCIDENT, VIC_RACE), TOTAL = n()) %>% 
+  arrange(desc(BORO), desc(YEAR_OF_INCIDENT))
+
+summary(shootings_by_sex)
+summary(shootings_by_age)
+summary(shootings_by_race)
+
+```
+I wasn't entirely sure how I wanted to potential model the data at this point so I mostly messed around with the data to see how I could manipulate it. Below is my attempt to create columns for the specific types in the social group category, i.e. a column for total female shootings and a column for total male shootings, ect.
+
+```{r, creating_total_columns, include=TRUE}
+
+# making the columns for totals based on the different groupings
+shootings_by_sex_with_totals <- shootings_by_sex %>% 
+  pivot_wider(names_from = VIC_SEX, values_from = TOTAL) %>% 
+  summarize(.by = c(BORO, YEAR_OF_INCIDENT), 
+            TOTAL_MALE = sum(M), 
+            TOTAL_FEMALE = sum(F), 
+            TOTAL_U = sum(U)) %>%
+  mutate(TOTAL = rowSums(across(c(TOTAL_MALE, TOTAL_FEMALE, TOTAL_U)), na.rm=TRUE))
+
+summary(shootings_by_sex_with_totals)
+
+```
+
+I wanted to look at the data in a visual way to get an idea of what I was looking at so I chose a borough to look at and see what the data looked like plotted out as it was. Below are the different shooting amounts in the year range within Staten Island, broken down into social groups.
+
+```{r, analyzing_data, include=TRUE}
+
+shootings_by_age %>% filter(BORO == 'STATEN ISLAND') %>% 
+  ggplot(aes(y = TOTAL, x = YEAR_OF_INCIDENT)) + 
+  geom_line(aes(y = TOTAL, color = VIC_AGE_GROUP)) + 
+  geom_point(aes(y = TOTAL, color = VIC_AGE_GROUP))
+shootings_by_race %>% filter(BORO == 'STATEN ISLAND') %>% 
+  ggplot(aes(y = TOTAL, x = YEAR_OF_INCIDENT)) + 
+  geom_line(aes(y = TOTAL, color = VIC_RACE)) + 
+  geom_point(aes(y = TOTAL, color = VIC_RACE))
+shootings_by_sex %>% filter(BORO == 'STATEN ISLAND') %>% 
+  ggplot(aes(y = TOTAL, x = YEAR_OF_INCIDENT)) + 
+  geom_line(aes(y = TOTAL, color = VIC_SEX)) + 
+  geom_point(aes(y = TOTAL, color = VIC_SEX))
+
+```
+
+After viewing the data the totals for each group did still add up to the total for the borough and the borough totals did add up to the original amount of rows so I knew I had not lost any data at this point.
+
+# Data Modeling
+
+At this point I needed to figure out what sort of model would accomplish what I wanted to do with the data. I wanted to be able to get some sort of predictive values for each category within a social group for each borough by using this historical data. After searching online I found [this](https://www.dataquest.io/blog/tutorial-poisson-regression-in-r/) useful tutorial on Poisson Regression and when to use this sort of model. I decided to use this model and plot, because it's best used for count data, which would apply perfectly to what I was trying to do. Below
+
+```{r, modeling_data, include=TRUE}
+
+model_vic_sex <- glm(TOTAL ~ (BORO + VIC_SEX), 
+                     shootings_by_sex, family = quasipoisson(link = "log"))
+model_vic_age <- glm(TOTAL ~ (BORO + VIC_AGE_GROUP), 
+                     shootings_by_age, family = quasipoisson(link = "log"))
+model_vic_race <- glm(TOTAL ~ (BORO + VIC_RACE), 
+                      shootings_by_race, family = quasipoisson(link = "log"))
+
+suppressWarnings(cat_plot(model_vic_sex, pred = BORO, modx = VIC_SEX))
+suppressWarnings(cat_plot(model_vic_age, pred = BORO, modx = VIC_AGE_GROUP))
+suppressWarnings(cat_plot(model_vic_race, pred = BORO, modx = VIC_RACE))
+
+```
+
+Overall I'm pretty happy with what I was able to do and what I learned. I think there's more that could be looked at with data and also some of the predictive values have huge ranges for what the potential totals are. So potentially there could be more work to see why some of those ranges are so long. I think also the data was a lot more incomplete than I thought it would have been. Any predictive models made from this probably should be made with a grain of salt as we're not sure what the actual amounts of shootings in each borough are since there could have been unreported shootings or unresolved shootings. I imagine that the amounts of unreported shootings probably vary depending on borough as well.
+
+# Bias Identification
+
+I am a white female who grew up in a very rural area in Colorado. I started living in the city during while I was studying for my Bachelor's degree and I have not even visited New York City. At the start of this I almost wanted to include the perpetrator data, but after looking at it a lot of it is actually unknown. I also remember from social media a lot of people were posting very offensive fake statistics about shooting data during 2020 and I knew that I wanted the way I presented the data to not resemble that.
